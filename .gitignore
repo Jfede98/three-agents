@@ -1,0 +1,12 @@
+node_modules
+.next
+out/
+.env
+.env.local
+.env*.local
+.auth-keys.json
+.local/
+.context/
+*.tsbuildinfo
+.convex/
+tmp/
