@@ -55,6 +55,13 @@ export const applyAgentRun = internalMutation({
     const stockPct = inventoryTarget > 0 ? Math.round(100 * inventoryOnHand / inventoryTarget) : 0;
     const clock = await ctx.db.query("liveClock").withIndex("by_key", (q) => q.eq("key", "main")).unique();
     const activePromo = live ? live.seasonPromo || live.promoUntil > (clock?.tick ?? 0) : args.activePromo;
+    // A tick may change evidence without changing the decision revision. Do not
+    // combine an old explanation with current stock or promotion state.
+    if (
+      inventoryOnHand !== args.inventoryOnHand ||
+      inventoryTarget !== args.inventoryTarget ||
+      activePromo !== args.activePromo
+    ) return { recommendationId: null, stale: true };
     if (live) await ctx.db.patch(live._id, { lastAnalysisAt: args.analysisStartedAt });
     const byRole = new Map(args.agents.map((a) => [a.role, a]));
     const rows = await ctx.db.query("signals")
@@ -134,7 +141,7 @@ export const applyAgentRun = internalMutation({
       headline,
       detail: detailParts.join(" "),
       status: "pending",
-      proposedBy: "agentes-bedrock",
+      proposedBy: "analistas-reglas",
       decidedBy: null,
       restockUnits: units,
       promoDays: promoDays > 0 ? promoDays : undefined,

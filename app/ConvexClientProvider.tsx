@@ -19,7 +19,7 @@ class BackendErrorBoundary extends Component<{ children: ReactNode }, { failed: 
       return (
         <main role="alert">
           <h1>No se pudo cargar el tablero</h1>
-          <p>El servicio no está disponible en este momento. Reintenta cuando se restablezca la conexión.</p>
+          <p>No se pudo conectar con la simulación. Comprueba que esté en marcha y vuelve a intentarlo.</p>
           <button type="button" onClick={() => window.location.reload()}>Volver a cargar</button>
         </main>
       );
@@ -32,8 +32,8 @@ export function ConvexClientProvider({ children }: { children: ReactNode }) {
   if (!client) {
     return (
       <main>
-        <h1>El servicio aún no está configurado</h1>
-        <p>Falta completar la conexión del tablero con el backend de este despliegue.</p>
+        <h1>La simulación aún no está preparada</h1>
+        <p>Completa la configuración inicial del proyecto para abrir el tablero.</p>
       </main>
     );
   }

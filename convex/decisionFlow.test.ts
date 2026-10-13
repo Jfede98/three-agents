@@ -35,7 +35,7 @@ function runArgs(liveStockId: Id<"liveStock">) {
     baselineDecisionRevision: 0, analysisStartedAt: NOW,
     agents: [
       { role: "whatsapp" as const, level: 95, summary: "Demanda alta.", rationale: "Consultas sintéticas." },
-      // Deliberately inaccurate model level: numerical inventory remains authoritative.
+      // Deliberately inaccurate analysis level: numerical inventory remains authoritative.
       { role: "inventario" as const, level: 0, summary: "Stock bajo.", rationale: "Revisar existencias." },
       { role: "promocion" as const, level: 0, summary: "Sin promoción.", rationale: "Calendario sintético." },
     ],
@@ -53,10 +53,10 @@ afterEach(() => {
 });
 
 describe("commercial decisions against synthetic inventory", () => {
-  it("does not restock full inventory even when the model says zero stock", async () => {
+  it("does not restock full inventory even when the analysis says zero stock", async () => {
     const t = makeTest();
     const stockId = await seedStock(t, 1000);
-    const result = await t.mutation(internal.agentApply.applyAgentRun, runArgs(stockId));
+    const result = await t.mutation(internal.agentApply.applyAgentRun, { ...runArgs(stockId), inventoryOnHand: 1000 });
     expect(result).toEqual({ recommendationId: null, stale: false });
     const board = await t.query(api.comercial.board, {});
     expect(board.recommendations).toHaveLength(0);
@@ -108,6 +108,35 @@ describe("commercial decisions against synthetic inventory", () => {
     const stockId = await seedStock(t);
     await t.mutation(api.comercial.resetScenario, {});
     expect(await t.mutation(internal.agentApply.applyAgentRun, runArgs(stockId))).toEqual({ recommendationId: null, stale: true });
+  });
+
+  it.each([
+    { label: "stock consumed", patch: { onHand: 99 } },
+    { label: "stock replenished", patch: { onHand: 101 } },
+    { label: "inventory target changed", patch: { target: 1100 } },
+    { label: "local promotion started", patch: { promoUntil: 11 } },
+    { label: "seasonal promotion started", patch: { seasonPromo: true } },
+  ])("discards changed evidence without a decision revision: $label", async ({ patch }) => {
+    const t = makeTest();
+    const stockId = await seedStock(t);
+    const snapshot = runArgs(stockId);
+    await t.run((ctx) => ctx.db.patch(stockId, patch));
+    expect(await t.mutation(internal.agentApply.applyAgentRun, snapshot)).toEqual({ recommendationId: null, stale: true });
+    expect(await t.query(api.comercial.board, {})).toEqual({ signals: [], recommendations: [] });
+    expect((await t.run((ctx) => ctx.db.get(stockId)))?.lastAnalysisAt).toBeUndefined();
+  });
+
+  it("discards an analysis if the clock passes the promotion expiry", async () => {
+    const t = makeTest();
+    const stockId = await seedStock(t);
+    await t.run(async (ctx) => {
+      await ctx.db.patch(stockId, { promoUntil: 11 });
+      const clock = await ctx.db.query("liveClock").withIndex("by_key", (q) => q.eq("key", "main")).unique();
+      await ctx.db.patch(clock!._id, { tick: 11 });
+    });
+    const snapshot = { ...runArgs(stockId), activePromo: true };
+    expect(await t.mutation(internal.agentApply.applyAgentRun, snapshot)).toEqual({ recommendationId: null, stale: true });
+    expect(await t.query(api.comercial.board, {})).toEqual({ signals: [], recommendations: [] });
   });
 
   it("retains superseded proposals and rejects an older analysis result", async () => {

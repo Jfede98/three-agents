@@ -8,3 +8,5 @@ out/
 .local/
 .context/
 *.tsbuildinfo
+.convex/
+tmp/

@@ -1,13 +1,14 @@
 /**
- * Explicit end-to-end smoke test against the deployed SYNTHETIC demo.
- * Run only after deployment is ready:
- *   node --env-file=.env.local scripts/smoke-aws.mjs
- * Requires NEXT_PUBLIC_CONVEX_URL and CONVEX_SELF_HOSTED_ADMIN_KEY. The public
- * client drives the workflow; the admin client only reads exact inventory.
- * Makes two real three-agent Bedrock analyses. Leaves the simulator paused.
+ * End-to-end smoke test against a running LOCAL synthetic scenario.
+ * Start the backend with npm run dev:backend, then run npm run test:smoke.
+ * Requires a loopback NEXT_PUBLIC_CONVEX_URL and a local CONVEX_DEPLOYMENT.
+ * The public client drives the workflow; the local CLI reads exact inventory.
+ * Runs two rule-based analyses and leaves the synthetic simulator paused.
  */
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { mkdir, writeFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
 import { ConvexHttpClient } from "convex/browser";
 import { makeFunctionReference } from "convex/server";
 
@@ -20,17 +21,19 @@ const report = {
   analyses: [],
   decisions: [],
 };
-const reportFile = new URL("../.local/aws-smoke.json", import.meta.url);
+const reportFile = new URL("../.local/smoke-local.json", import.meta.url);
+const projectRoot = fileURLToPath(new URL("../", import.meta.url));
+const convexCli = fileURLToPath(new URL("../node_modules/convex/bin/main.js", import.meta.url));
 const ref = (name) => makeFunctionReference(name);
-const pause = () => new Promise((resolve) => setTimeout(resolve, 1_150));
 const requestFetch = (input, init) => fetch(input, {
   ...init,
-  signal: init?.signal ?? AbortSignal.timeout(240_000),
+  redirect: "error",
+  signal: init?.signal ?? AbortSignal.timeout(30_000),
 });
 const stockSnapshot = (row) => ({ onHand: row.onHand, target: row.target, stockPct: row.stockPct });
 const sanitizeError = (error) => {
   let message = String(error?.message ?? error);
-  for (const key of ["CONVEX_SELF_HOSTED_ADMIN_KEY", "CONVEX_DEPLOY_KEY", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN"]) {
+  for (const key of ["CONVEX_SELF_HOSTED_ADMIN_KEY", "CONVEX_DEPLOY_KEY", "CONVEX_DEPLOYMENT_TOKEN", "CONVEX_OVERRIDE_ACCESS_TOKEN"]) {
     if (process.env[key]) message = message.replaceAll(process.env[key], "[REDACTED]");
   }
   return message.slice(0, 1_500);
@@ -42,17 +45,42 @@ function stage(name, evidence = {}) {
 
 try {
   const endpoint = process.env.NEXT_PUBLIC_CONVEX_URL;
-  const adminKey = process.env.CONVEX_SELF_HOSTED_ADMIN_KEY;
   assert.ok(endpoint, "NEXT_PUBLIC_CONVEX_URL is required; this test never creates a deployment.");
-  assert.ok(adminKey, "CONVEX_SELF_HOSTED_ADMIN_KEY is required to verify exact inventory quantities.");
   const parsedUrl = new URL(endpoint);
   assert.ok(["http:", "https:"].includes(parsedUrl.protocol), "Backend must use HTTP(S).");
   assert.equal(parsedUrl.username + parsedUrl.password + parsedUrl.search + parsedUrl.hash, "", "Backend URL must not embed credentials or query parameters.");
+  assert.ok(["localhost", "127.0.0.1", "[::1]"].includes(parsedUrl.hostname), "Smoke tests only run against a loopback backend, never a remote deployment.");
+  assert.equal(parsedUrl.pathname, "/", "Backend URL must point to the local server origin.");
+  assert.match(process.env.CONVEX_DEPLOYMENT ?? "", /^(anonymous|local):\S+$/, "CONVEX_DEPLOYMENT must select an existing anonymous: or local: deployment.");
   const url = endpoint.replace(/\/$/, "");
   report.backendUrl = url;
   const client = new ConvexHttpClient(url, { logger: false, fetch: requestFetch });
-  const evidenceClient = new ConvexHttpClient(url, { logger: false, fetch: requestFetch });
-  evidenceClient.setAdminAuth(adminKey);
+
+  function readInventory(selection) {
+    const result = spawnSync(process.execPath, [convexCli, "run", "agentData:inventoryMetrics", JSON.stringify(selection)], {
+      cwd: projectRoot,
+      encoding: "utf8",
+      shell: false,
+      windowsHide: true,
+      timeout: 30_000,
+      // Empty overrides prevent .env fallbacks from selecting a remote target.
+      // The CLI obtains its local credentials from its own deployment config.
+      env: {
+        ...process.env,
+        CONVEX_DEPLOY_KEY: "",
+        CONVEX_DEPLOYMENT_TOKEN: "",
+        CONVEX_SELF_HOSTED_URL: "",
+        CONVEX_SELF_HOSTED_ADMIN_KEY: "",
+      },
+    });
+    if (result.error) throw result.error;
+    assert.equal(result.status, 0, `Local inventory query failed: ${sanitizeError(result.stderr)}`);
+    const row = JSON.parse(result.stdout.trim());
+    assert.equal(row.city, selection.city);
+    assert.equal(row.sku, selection.sku);
+    assert.ok([row.onHand, row.target, row.stockPct].every(Number.isFinite), "Inventory evidence must contain finite quantities.");
+    return row;
+  }
 
   await client.mutation(ref("comercial:ensureScenario"), {});
   await client.mutation(ref("live:setRunning"), { running: false });
@@ -80,7 +108,7 @@ try {
   assert.ok(selected, "A synthetic SKU must be available.");
   const selection = { city: selected.city, sku: selected.sku };
   report.selection = { ...selection, product: selected.product };
-  const inventory = () => evidenceClient.query(ref("agentData:inventoryMetrics"), selection);
+  const inventory = () => readInventory(selection);
   const board = () => client.query(ref("comercial:board"), {});
   const originalStock = stockSnapshot(await inventory());
   assert.ok(originalStock.target > 0 && originalStock.stockPct < 25, "Exact stock must require replenishment.");
@@ -95,8 +123,8 @@ try {
     const result = await client.action(ref("agents/run:analyzeCity"), { ...selection, product: selected.product });
     const entry = { label, startedAt: new Date(startedAt).toISOString(), elapsedMs: Date.now() - startedAt, ...result };
     report.analyses.push(entry);
-    assert.equal(result.ok, true, result.error ?? "Bedrock analysis failed.");
-    assert.equal(result.mode, "bedrock", "Fallback is not a passing smoke result.");
+    assert.equal(result.ok, true, result.error ?? "Rule-based analysis failed.");
+    assert.equal(result.mode, "rules", "The smoke test must use the credential-free rules engine.");
     assert.deepEqual(result.agents.map((agent) => agent.role).sort(), ["inventario", "promocion", "whatsapp"]);
     for (const agent of result.agents) {
       assert.ok(Number.isFinite(agent.level) && agent.level >= 0 && agent.level <= 100, "Agent level must be finite and in range.");
@@ -110,7 +138,7 @@ try {
     assert.equal(pending.length, 1, "Exactly one pending recommendation is required for the selection.");
     const recommendation = pending[0];
     assert.ok(!existingIds.has(recommendation.id), "Analysis must create a newly validated recommendation.");
-    assert.equal(recommendation.proposedBy, "agentes-bedrock");
+    assert.equal(recommendation.proposedBy, "analistas-reglas");
     assert.equal(recommendation.restockUnits, Math.ceil(stockBefore.target - stockBefore.onHand));
     assert.ok(recommendation.expiresAt > Date.now(), "Recommendation must not already be expired.");
     entry.recommendation = recommendation;
@@ -118,7 +146,7 @@ try {
     return recommendation;
   }
 
-  const first = await analyze("first_real_bedrock_analysis");
+  const first = await analyze("first_rules_analysis");
   const rejected = await client.mutation(ref("comercial:decide"), { recommendationId: first.id, decision: "reject" });
   assert.equal(rejected.status, "rejected");
   assert.deepEqual(stockSnapshot(await inventory()), originalStock, "Rejection must not change inventory.");
@@ -128,8 +156,7 @@ try {
   report.decisions.push({ kind: "reject", recommendationId: first.id, repeatedResultIdentical: true, stock: originalStock });
   stage("rejection_idempotent", { recommendationId: first.id, stockUnchanged: true });
 
-  await pause();
-  const second = await analyze("second_real_bedrock_analysis");
+  const second = await analyze("second_rules_analysis");
   assert.notEqual(second.id, first.id, "Reanalysis must preserve the rejected decision and create a new proposal.");
   const approved = await client.mutation(ref("comercial:decide"), { recommendationId: second.id, decision: "approve" });
   assert.equal(approved.status, "approved");
@@ -162,5 +189,5 @@ try {
   report.finishedAt = new Date().toISOString();
   await mkdir(new URL("../.local/", import.meta.url), { recursive: true });
   await writeFile(reportFile, JSON.stringify(report, null, 2));
-  console.log(JSON.stringify({ report: ".local/aws-smoke.json", success: report.success, analysesCompleted: report.analyses.length, simulatorLeftPaused: report.simulatorLeftPaused }));
+  console.log(JSON.stringify({ report: ".local/smoke-local.json", success: report.success, analysesCompleted: report.analyses.length, simulatorLeftPaused: report.simulatorLeftPaused }));
 }

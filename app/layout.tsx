@@ -15,7 +15,7 @@ const archivo = localFont({
 export const metadata = {
   title: "Orden por firmar · Analista comercial Farmaenlace",
   description:
-    "Tres agentes cruzan WhatsApp, inventario y promociones y proponen una orden concreta que el encargado de zona firma.",
+    "Tres análisis por reglas cruzan datos sintéticos de WhatsApp, inventario y promociones y proponen una orden que el encargado de zona firma en la simulación.",
 };
 
 export const viewport = {

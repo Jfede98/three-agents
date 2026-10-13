@@ -1,7 +1,7 @@
 "use client";
 
 import { useAction, useMutation, useQuery } from "convex/react";
-import { Check, FastForward, Pause, PenLine, Play, RotateCcw, Sparkles, X } from "lucide-react";
+import { Check, FastForward, Pause, PenLine, Play, RotateCcw, Search, X } from "lucide-react";
 import dynamic from "next/dynamic";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import type { ReactNode } from "react";
@@ -40,7 +40,7 @@ type CityId = (typeof CITIES)[number]["id"];
 type Status = "pending" | "approved" | "rejected" | "expired" | "superseded";
 
 type Signal = { city: string; source: "whatsapp" | "inventario" | "promocion"; product: string; summary: string; level: number };
-type AgentResult = { role: "whatsapp" | "inventario" | "promocion"; summary: string; rationale: string };
+type AnalysisResult = { role: "whatsapp" | "inventario" | "promocion"; summary: string; rationale: string };
 type Order = {
   id: Id<"recommendations">;
   city: string;
@@ -106,8 +106,8 @@ export default function Page() {
   const board = useQuery(api.comercial.board, {});
   const world = useQuery(api.live.world, {});
   const [focus, setFocus] = useState<CityId>("guayaquil");
-  const [busy, setBusy] = useState<"approve" | "reject" | "reset" | "agents" | "advance" | "clock" | null>(null);
-  const [agentFeedback, setAgentFeedback] = useState<{ city: CityId; product: string; text: string; agents: AgentResult[] } | null>(null);
+  const [busy, setBusy] = useState<"approve" | "reject" | "reset" | "analyze" | "advance" | "clock" | null>(null);
+  const [analysisFeedback, setAnalysisFeedback] = useState<{ city: CityId; product: string; text: string; analyses: AnalysisResult[] } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const [announcement, setAnnouncement] = useState("");
@@ -137,22 +137,23 @@ export default function Page() {
     };
   }, [heartbeat]);
 
-  async function runAgents(cityId: CityId, target: string | undefined) {
+  async function runAnalysis(cityId: CityId, target: string | undefined) {
     const meta = CITIES.find((item) => item.id === cityId) ?? CITIES[0];
-    setBusy("agents");
+    setBusy("analyze");
     setError(null);
-    setAgentFeedback(null);
+    setAnalysisFeedback(null);
+    setAnnouncement("");
     try {
       const result = await analyzeCity({ city: cityId, product: target });
-      if (!result.ok || result.mode !== "bedrock") {
-        setError(result.error ?? "No se completó el análisis con Bedrock. Vuelve a intentarlo.");
+      if (!result.ok || result.mode !== "rules") {
+        setError(result.error ?? "No se completó el análisis de datos. Vuelve a intentarlo.");
         return;
       }
-      const text = `${result.agents.length} agentes Bedrock analizaron los datos sintéticos de ${meta.label}.`;
-      setAgentFeedback({ city: cityId, product: target ?? "la zona", text, agents: result.agents });
+      const text = `${result.agents.length} análisis por reglas completados con los datos sintéticos de ${meta.label}.`;
+      setAnalysisFeedback({ city: cityId, product: target ?? "la zona", text, analyses: result.agents });
       setAnnouncement(text);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Los agentes no pudieron analizar la zona.");
+      setError(caught instanceof Error ? caught.message : "No se pudieron analizar los datos de la zona.");
     } finally {
       setBusy(null);
     }
@@ -209,7 +210,7 @@ export default function Page() {
       const result = await decide({ recommendationId: order.id, decision });
       const code = orderCode(order, city.code);
       if (result.status === "expired" || result.status === "superseded") {
-        setError("La orden ya no está vigente. Analiza de nuevo con los agentes antes de firmar.");
+        setError("La orden ya no está vigente. Analiza los datos de nuevo antes de firmar.");
       } else {
         setAnnouncement(result.status === "approved" ? `Orden ${code} liberada en la simulación.` : `Orden ${code} rechazada.`);
       }
@@ -253,7 +254,7 @@ export default function Page() {
     try {
       await resetScenario();
       stockBefore.current = {};
-      setAgentFeedback(null);
+      setAnalysisFeedback(null);
       setFocus("guayaquil");
       setAnnouncement("Demo reiniciada. Las zonas empiezan a moverse de nuevo.");
     } catch (caught) {
@@ -263,7 +264,7 @@ export default function Page() {
     }
   }
 
-  const loading = board === undefined || world === undefined || busy === "agents";
+  const loading = board === undefined || world === undefined || busy === "analyze";
   const status: Status | "none" = order?.status ?? "none";
   const released = status === "approved";
 
@@ -315,14 +316,14 @@ export default function Page() {
           <button
             type="button"
             className="ghost"
-            onClick={() => void runAgents(focus, product || undefined)}
+            onClick={() => void runAnalysis(focus, product || undefined)}
             disabled={busy !== null || !product}
           >
-            <Sparkles aria-hidden="true" size={16} strokeWidth={2} />
+            <Search aria-hidden="true" size={16} strokeWidth={2} />
             <span className="ghost-label">
-              {busy === "agents"
-                ? "Agentes analizando…"
-                : "Analizar con Bedrock"}
+              {busy === "analyze"
+                ? "Analizando datos…"
+                : "Analizar datos"}
             </span>
           </button>
           <button type="button" className="ghost" onClick={() => void onReset()} disabled={busy !== null}>
@@ -366,7 +367,7 @@ export default function Page() {
               <OrderFields order={order} city={city.label} />
             ) : loading ? null : (
               <p className="order-quiet">
-                Analiza {product} con Bedrock para cruzar consultas, stock y promociones. Si corresponde una acción,
+                Analiza los datos de {product} para cruzar consultas, stock y promociones. Si corresponde una acción,
                 la propuesta aparece aquí para tu firma.
               </p>
             )}
@@ -420,21 +421,21 @@ export default function Page() {
             {order && (
               <details className="reason" key={order.id}>
                 <summary>
-                  {order.proposedBy === "agentes-bedrock"
-                    ? "Ver evidencia · 3 agentes Bedrock (WA, INV, PRO)"
-                    : "Ver evidencia · reglas de la demo"}
+                  {order.proposedBy === "analistas-reglas"
+                    ? "Ver evidencia · 3 análisis por reglas (WA, INV, PRO)"
+                    : "Ver evidencia · reglas de la simulación"}
                 </summary>
                 <blockquote><p>{order.detail}</p></blockquote>
               </details>
             )}
 
-            {agentFeedback?.city === focus && (
+            {analysisFeedback?.city === focus && (
               <details className="order-quiet">
-                <summary>Último análisis Bedrock · {agentFeedback.product}</summary>
-                {agentFeedback.agents.map((agent) => (
-                  <p key={agent.role}>
-                    <b>{agent.role === "whatsapp" ? "WhatsApp" : agent.role === "inventario" ? "Inventario" : "Promociones"}:</b>{" "}
-                    {agent.summary} {agent.rationale}
+                <summary>Último análisis por reglas · {analysisFeedback.product}</summary>
+                {analysisFeedback.analyses.map((analysis) => (
+                  <p key={analysis.role}>
+                    <b>{analysis.role === "whatsapp" ? "WhatsApp" : analysis.role === "inventario" ? "Inventario" : "Promociones"}:</b>{" "}
+                    {analysis.summary} {analysis.rationale}
                   </p>
                 ))}
               </details>
@@ -476,14 +477,14 @@ export default function Page() {
                 )}
                 {status === "rejected" && (
                   <p className="sign-done">
-                    <b>Rechazada por el encargado de zona.</b> Puedes solicitar otro análisis con Bedrock.
+                    <b>Rechazada por el encargado de zona.</b> Puedes volver a analizar los datos.
                   </p>
                 )}
                 {(status === "expired" || status === "superseded") && (
-                  <p className="sign-done">La propuesta ya no está vigente. Analiza con Bedrock para actualizarla.</p>
+                  <p className="sign-done">La propuesta ya no está vigente. Analiza los datos para actualizarla.</p>
                 )}
                 {!order && !loading && <p className="sign-done">Sin orden pendiente en {city.label}.</p>}
-                {agentFeedback?.city === focus && <p className="sign-done" role="status">{agentFeedback.text}</p>}
+                {analysisFeedback?.city === focus && <p className="sign-done">{analysisFeedback.text}</p>}
                 {(error || connectionError) && (
                   <p className="sign-error" role="alert">
                     {error || connectionError}
@@ -498,7 +499,7 @@ export default function Page() {
           <div
             className="stage-canvas"
             role="img"
-            aria-label={`Maqueta simulada de ${city.label}: ${product}, ${inv ? `stock al ${inv.level}%` : "stock pendiente de lectura"} y tres agentes en sus puestos.`}
+            aria-label={`Maqueta simulada de ${city.label}: ${product}, ${inv ? `stock al ${inv.level}%` : "stock pendiente de lectura"} y tres analistas en sus puestos.`}
           >
             {inv && <Branch
               zone={city.id}
@@ -518,13 +519,13 @@ export default function Page() {
           <div className="stage-head">
             <h2 id="stage-title">Zona {city.label}</h2>
             <p>
-              {status === "pending" && (order?.proposedBy === "agentes-bedrock"
-                ? `Tres agentes Bedrock analizaron ${product}.`
-                : `Propuesta de reglas demo sobre ${product}. Analiza con Bedrock para usar los agentes.`)}
+              {status === "pending" && (order?.proposedBy === "analistas-reglas"
+                ? `Tres análisis por reglas proponen una acción sobre ${product}.`
+                : `Propuesta por reglas sobre ${product}. Puedes actualizarla al analizar los datos.`)}
               {status === "approved" && `Reabastecimiento simulado de ${product}.`}
               {status === "rejected" && `Orden rechazada. ${product} sigue en observación.`}
               {(status === "expired" || status === "superseded") && `Propuesta anterior de ${product}. Requiere otro análisis.`}
-              {!order && (loading ? "Leyendo señales de la zona…" : `Analiza ${product} con los agentes Bedrock.`)}
+              {!order && (loading ? "Leyendo señales de la zona…" : `Analiza los datos de ${product}.`)}
             </p>
             {heroShelf?.trend && <p className="stage-trend">Contexto sintético: {heroShelf.trend}</p>}
           </div>
@@ -579,7 +580,7 @@ export default function Page() {
             <p className="manifest-scale">
               172 mil transacciones al día · 17.000 productos · 1.422 puntos de venta · 10 años de historial
             </p>
-            <p className="manifest-stack">Demo: datos y ejecución sintéticos · Análisis con Amazon Bedrock</p>
+            <p className="manifest-stack">Datos sintéticos · Análisis por reglas, sin IA generativa</p>
           </footer>
         </section>
       </main>

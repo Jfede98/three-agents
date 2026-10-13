@@ -102,13 +102,6 @@ export default defineSchema({
   }).index("by_status", ["status"])
     .index("by_city_and_status", ["city", "status"]),
 
-  bedrockGate: defineTable({
-    key: v.string(),
-    leaseId: v.optional(v.string()),
-    leaseUntil: v.number(),
-    nextAllowedAt: v.number(),
-  }).index("by_key", ["key"]),
-
   catalogItems: defineTable({
     sku: v.string(),
     name: v.string(),
