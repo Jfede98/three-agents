@@ -1,6 +1,6 @@
 # Three Agents · Primera Línea
 
-[Repositorio](https://github.com/Jfede98/three-agents/tree/feature/jfede_branch)
+[Repositorio](https://github.com/Jfede98/three-agents)
 
 Tablero comercial que cruza consultas de clientes, inventario y promociones para proponer reposiciones por ciudad. Una persona revisa la evidencia y aprueba o rechaza cada propuesta.
 
@@ -11,7 +11,7 @@ La versión actual funciona con **Convex local y análisis determinista por regl
 Requisitos: Node.js 22 LTS (22.13 o superior) y npm; `.nvmrc` selecciona esa versión. En Windows se verificó con Node.js 22.23.3. La primera instalación necesita acceso a Internet para descargar las dependencias y el backend local.
 
 ```powershell
-git clone --branch feature/jfede_branch https://github.com/Jfede98/three-agents.git
+git clone https://github.com/Jfede98/three-agents.git
 cd three-agents
 npm ci
 npm run setup
@@ -75,10 +75,6 @@ Las pruebas automatizadas cubren análisis, validación de datos, decisiones y p
 - `data/mock/`: catálogo, sucursales, consultas, existencias, promociones y noticias sintéticas.
 - `scripts/`: generación, importación y prueba de integración local.
 
-## Próximo paso: cuentas propias
-
-Convex ya proporciona la base de datos, las funciones y la sincronización en tiempo real. El modo local permite continuar sin crear una cuenta. Para un entorno compartido se puede vincular el proyecto a una cuenta propia mediante `npx convex login` y configurar un despliegue de desarrollo en Convex Cloud. [Guía oficial](https://docs.convex.dev/cli/local-deployments).
-
-Convex no sustituye por sí mismo a un modelo generativo. Si se añade IA, habrá que elegir un proveedor y configurar sus propias credenciales en el backend. La interfaz debe seguir distinguiendo los análisis por reglas de los generados por un modelo.
+## Alcance actual
 
 Este entorno es de desarrollo: aún no hay autenticación ni permisos por usuario, y las decisiones usan un actor de demostración. Antes de publicarlo para terceros hay que configurar esas dos capas y elegir alojamiento para el frontend. No hay un despliegue público configurado en esta versión.
